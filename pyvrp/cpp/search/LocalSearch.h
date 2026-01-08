@@ -38,11 +38,19 @@ class LocalSearch
     std::vector<int> lastTestedRoutes;  // tracks route operator evaluation
     std::vector<int> lastUpdated;       // tracks when routes were last modified
 
+    // Maps client index to same-vehicle groups it belongs to (by group index).
+    std::vector<std::vector<size_t>> clientToSameVehicleGroups_;
+
     size_t numUpdates_ = 0;         // modification counter
     bool searchCompleted_ = false;  // No further improving move found?
 
     // Load an initial solution that we will attempt to improve.
     void loadSolution(pyvrp::Solution const &solution);
+
+    // Checks if moving client U to a different route would violate same-vehicle
+    // constraints by leaving behind group members on the current route.
+    bool wouldViolateSameVehicle(Route::Node const *U,
+                                 Route const *targetRoute) const;
 
     // Tests the node pair (U, V).
     bool applyNodeOps(Route::Node *U,

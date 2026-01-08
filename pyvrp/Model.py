@@ -10,6 +10,7 @@ from pyvrp._pyvrp import (
     ClientGroup,
     Depot,
     ProblemData,
+    SameVehicleGroup,
     VehicleType,
 )
 from pyvrp.constants import MAX_VALUE
@@ -106,6 +107,7 @@ class Model:
         self._depots: list[Depot] = []
         self._edges: list[Edge] = []
         self._groups: list[ClientGroup] = []
+        self._same_vehicle_groups: list[SameVehicleGroup] = []
         self._profiles: list[Profile] = []
         self._vehicle_types: list[VehicleType] = []
 
@@ -138,6 +140,13 @@ class Model:
         Returns all client groups currently in the model.
         """
         return self._groups
+
+    @property
+    def same_vehicle_groups(self) -> list[SameVehicleGroup]:
+        """
+        Returns all same-vehicle groups currently in the model.
+        """
+        return self._same_vehicle_groups
 
     @property
     def profiles(self) -> list[Profile]:
@@ -199,6 +208,7 @@ class Model:
         self._clients = clients
         self._depots = depots
         self._groups = data.groups()
+        self._same_vehicle_groups = data.same_vehicle_groups()
         self._profiles = profiles
         self._vehicle_types = data.vehicle_types()
 
@@ -276,6 +286,44 @@ class Model:
         self._groups.append(group)
         return group
 
+    def add_same_vehicle_group(
+        self, *clients: Client, name: str = ""
+    ) -> SameVehicleGroup:
+        """
+        Adds a same-vehicle constraint group to the model. All clients in this
+        group that are visited must be served by the same vehicle. It is allowed
+        to visit only a subset of the group (or none at all), but any visited
+        clients must share a route.
+
+        Parameters
+        ----------
+        *clients
+            The clients that must be served by the same vehicle.
+        name
+            Optional name for the group.
+
+        Returns
+        -------
+        SameVehicleGroup
+            The created same-vehicle group.
+
+        Raises
+        ------
+        ValueError
+            When any of the given clients are not in this model instance.
+        """
+        client_indices = []
+        for client in clients:
+            idx = _idx_by_id(client, self._clients)
+            if idx is None:
+                raise ValueError("A given client is not in this model.")
+            # Client indices are offset by the number of depots
+            client_indices.append(len(self._depots) + idx)
+
+        group = SameVehicleGroup(client_indices, name=name)
+        self._same_vehicle_groups.append(group)
+        return group
+
     def add_depot(
         self,
         x: float,
@@ -299,6 +347,16 @@ class Model:
         for idx, client in enumerate(self._clients, len(self._depots)):
             if client.group is not None:
                 self._groups[client.group].add_client(idx)
+
+        # Rebuild same-vehicle groups with updated client indices
+        old_groups = self._same_vehicle_groups
+        self._same_vehicle_groups = []
+        for group in old_groups:
+            # Shift all client indices by 1 (for the new depot)
+            new_clients = [c + 1 for c in group.clients]
+            self._same_vehicle_groups.append(
+                SameVehicleGroup(new_clients, name=group.name)
+            )
 
         return depot
 
@@ -500,6 +558,7 @@ class Model:
             distances,
             durations,
             self._groups,
+            self._same_vehicle_groups,
         )
 
     def solve(

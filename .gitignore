@@ -1,6 +1,7 @@
 .vscode
 .flake8
 tmp
+.envrc
 
 # Prerequisites
 *.d

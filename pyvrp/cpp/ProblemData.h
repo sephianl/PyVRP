@@ -21,6 +21,7 @@ namespace pyvrp
  *     distance_matrices: list[numpy.ndarray[int]],
  *     duration_matrices: list[numpy.ndarray[int]],
  *     groups: list[ClientGroup] = [],
+ *     same_vehicle_groups: list[SameVehicleGroup] = [],
  * )
  *
  * Creates a problem data instance. This instance contains all information
@@ -51,6 +52,9 @@ namespace pyvrp
  *     List of client groups. Client groups have certain restrictions - see the
  *     definition for details. By default there are no groups, and empty groups
  *     must not be passed.
+ * same_vehicle_groups
+ *     List of same-vehicle groups. Clients in these groups must be served by
+ *     the same vehicle if visited. By default there are no such groups.
  *
  * Raises
  * ------
@@ -262,6 +266,70 @@ public:
         ClientGroup &operator=(ClientGroup &&group) = delete;
 
         ~ClientGroup();
+
+        bool empty() const;
+        size_t size() const;
+
+        std::vector<size_t>::const_iterator begin() const;
+        std::vector<size_t>::const_iterator end() const;
+
+        std::vector<size_t> const &clients() const;
+
+        void addClient(size_t client);
+        void clear();
+    };
+
+    /**
+     * SameVehicleGroup(
+     *    clients: list[int] = [],
+     *    *,
+     *    name: str = "",
+     * )
+     *
+     * A group of clients that must be served by the same vehicle. If multiple
+     * clients from the group are visited, they must all be on the same route.
+     * It is allowed to visit only a subset of the group (or none at all), but
+     * any visited clients must share a vehicle.
+     *
+     * Parameters
+     * ----------
+     * clients
+     *     The clients in the group.
+     * name
+     *    Free-form name field for this group. Default empty.
+     *
+     * Attributes
+     * ----------
+     * clients
+     *     The clients in the group.
+     * name
+     *    Free-form name field for this group.
+     *
+     * Raises
+     * ------
+     * ValueError
+     *     When the given clients contain duplicates, or when a client is added
+     *     to the group twice.
+     */
+    class SameVehicleGroup
+    {
+        std::vector<size_t> clients_;  // clients in this group
+
+    public:
+        char const *name;  // Group name (for reference)
+
+        explicit SameVehicleGroup(std::vector<size_t> clients = {},
+                                  std::string name = "");
+
+        bool operator==(SameVehicleGroup const &other) const;
+
+        SameVehicleGroup(SameVehicleGroup const &group);
+        SameVehicleGroup(SameVehicleGroup &&group);
+
+        SameVehicleGroup &operator=(SameVehicleGroup const &group) = delete;
+        SameVehicleGroup &operator=(SameVehicleGroup &&group) = delete;
+
+        ~SameVehicleGroup();
 
         bool empty() const;
         size_t size() const;
@@ -582,7 +650,8 @@ private:
     std::vector<Client> const clients_;            // Client information
     std::vector<Depot> const depots_;              // Depot information
     std::vector<VehicleType> const vehicleTypes_;  // Vehicle type information
-    std::vector<ClientGroup> const groups_;        // Client groups
+    std::vector<ClientGroup> const groups_;                  // Client groups
+    std::vector<SameVehicleGroup> const sameVehicleGroups_;  // Same vehicle groups
 
     size_t const numVehicles_;
     size_t const numLoadDimensions_;
@@ -617,6 +686,11 @@ public:
      * Returns a list of all client groups in the problem instance.
      */
     [[nodiscard]] std::vector<ClientGroup> const &groups() const;
+
+    /**
+     * Returns a list of all same-vehicle groups in the problem instance.
+     */
+    [[nodiscard]] std::vector<SameVehicleGroup> const &sameVehicleGroups() const;
 
     /**
      * Returns a list of all vehicle types in the problem instance.
@@ -659,6 +733,16 @@ public:
      *     Group index whose information to retrieve.
      */
     [[nodiscard]] ClientGroup const &group(size_t group) const;
+
+    /**
+     * Returns the same-vehicle group at the given index.
+     *
+     * Parameters
+     * ----------
+     * group
+     *     Group index whose information to retrieve.
+     */
+    [[nodiscard]] SameVehicleGroup const &sameVehicleGroup(size_t group) const;
 
     /**
      * Returns vehicle type data for the given vehicle type.
@@ -729,6 +813,11 @@ public:
     [[nodiscard]] size_t numGroups() const;
 
     /**
+     * Number of same-vehicle groups in this problem instance.
+     */
+    [[nodiscard]] size_t numSameVehicleGroups() const;
+
+    /**
      * Number of locations in this problem instance, that is, the number of
      * depots plus the number of clients in the instance.
      */
@@ -783,14 +872,16 @@ public:
                         std::optional<std::vector<VehicleType>> &vehicleTypes,
                         std::optional<std::vector<Matrix<Distance>>> &distMats,
                         std::optional<std::vector<Matrix<Duration>>> &durMats,
-                        std::optional<std::vector<ClientGroup>> &groups) const;
+                        std::optional<std::vector<ClientGroup>> &groups,
+                        std::optional<std::vector<SameVehicleGroup>> &sameVehicleGroups) const;
 
     ProblemData(std::vector<Client> clients,
                 std::vector<Depot> depots,
                 std::vector<VehicleType> vehicleTypes,
                 std::vector<Matrix<Distance>> distMats,
                 std::vector<Matrix<Duration>> durMats,
-                std::vector<ClientGroup> groups = {});
+                std::vector<ClientGroup> groups = {},
+                std::vector<SameVehicleGroup> sameVehicleGroups = {});
 
     ProblemData() = delete;
 };

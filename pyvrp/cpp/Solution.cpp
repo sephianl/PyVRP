@@ -276,6 +276,32 @@ Solution::Solution(ProblemData const &data, std::vector<Route> routes)
         isGroupFeas_ &= group.required ? numInSol == 1 : numInSol <= 1;
     }
 
+    // Build client-to-route mapping for same-vehicle group checks.
+    std::vector<std::optional<size_t>> clientRoute(data.numLocations());
+    for (size_t routeIdx = 0; routeIdx != routes_.size(); ++routeIdx)
+        for (auto const client : routes_[routeIdx])
+            clientRoute[client] = routeIdx;
+
+    for (auto const &group : data.sameVehicleGroups())
+    {
+        // The solution is feasible w.r.t. this same-vehicle group if all
+        // visited clients in the group are on the same route.
+        std::optional<size_t> expectedRoute = std::nullopt;
+        for (auto const client : group)
+        {
+            if (!isVisited[client])
+                continue;  // Client not in solution, skip
+
+            if (!expectedRoute.has_value())
+                expectedRoute = clientRoute[client];  // First visited client
+            else if (clientRoute[client] != expectedRoute)
+            {
+                isGroupFeas_ = false;  // Different routes = violation
+                break;
+            }
+        }
+    }
+
     for (size_t vehType = 0; vehType != data.numVehicleTypes(); vehType++)
         if (usedVehicles[vehType] > data.vehicleType(vehType).numAvailable)
         {
