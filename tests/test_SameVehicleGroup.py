@@ -1,14 +1,12 @@
 import pickle
 
 import numpy as np
-import pytest
 from numpy.testing import assert_, assert_equal, assert_raises
 
 from pyvrp import (
     Client,
     Depot,
     ProblemData,
-    Route,
     SameVehicleGroup,
     Solution,
     VehicleType,
@@ -85,8 +83,8 @@ def test_same_vehicle_group_equality():
     group4 = SameVehicleGroup([1, 2], name="other")
 
     assert_(group1 == group2)
-    assert_(not (group1 == group3))
-    assert_(not (group1 == group4))
+    assert_(group1 != group3)
+    assert_(group1 != group4)
 
 
 def test_same_vehicle_group_pickle():
@@ -107,7 +105,14 @@ def test_problem_data_with_same_vehicle_groups():
     clients = [Client(x=i, y=i) for i in range(1, 4)]
     depot = Depot(x=0, y=0)
     vehicle_type = VehicleType(num_available=2)
-    distances = np.array([[0, 1, 1, 1], [1, 0, 1, 1], [1, 1, 0, 1], [1, 1, 1, 0]])
+    distances = np.array(
+        [
+            [0, 1, 1, 1],
+            [1, 0, 1, 1],
+            [1, 1, 0, 1],
+            [1, 1, 1, 0],
+        ]
+    )
     durations = np.zeros_like(distances)
 
     # Create a same-vehicle group for clients 1 and 2 (indices 1 and 2)
@@ -185,7 +190,14 @@ def test_solution_feasibility_with_same_vehicle_constraint():
     clients = [Client(x=i, y=i) for i in range(1, 4)]
     depot = Depot(x=0, y=0)
     vehicle_type = VehicleType(num_available=2)
-    distances = np.array([[0, 1, 1, 1], [1, 0, 1, 1], [1, 1, 0, 1], [1, 1, 1, 0]])
+    distances = np.array(
+        [
+            [0, 1, 1, 1],
+            [1, 0, 1, 1],
+            [1, 1, 0, 1],
+            [1, 1, 1, 0],
+        ]
+    )
     durations = np.zeros_like(distances)
 
     # Clients 1 and 2 must be on the same vehicle
@@ -206,7 +218,7 @@ def test_solution_feasibility_with_same_vehicle_constraint():
     assert_(feasible_sol.is_group_feasible())
     assert_(feasible_sol.is_feasible())
 
-    # Solution where clients 1 and 2 are on different routes - should be infeasible
+    # Solution where clients 1 and 2 are on different routes - infeasible
     infeasible_sol = Solution(data, [[1, 3], [2]])
     assert_(not infeasible_sol.is_group_feasible())
     assert_(not infeasible_sol.is_feasible())
@@ -224,7 +236,14 @@ def test_solution_feasibility_partial_group_visit():
     ]
     depot = Depot(x=0, y=0)
     vehicle_type = VehicleType(num_available=1)
-    distances = np.array([[0, 1, 1, 1], [1, 0, 1, 1], [1, 1, 0, 1], [1, 1, 1, 0]])
+    distances = np.array(
+        [
+            [0, 1, 1, 1],
+            [1, 0, 1, 1],
+            [1, 1, 0, 1],
+            [1, 1, 1, 0],
+        ]
+    )
     durations = np.zeros_like(distances)
 
     # All three clients must be on the same vehicle if visited
@@ -258,10 +277,10 @@ def test_model_add_same_vehicle_group():
     Tests adding same-vehicle groups through the Model interface.
     """
     model = Model()
-    depot = model.add_depot(x=0, y=0)
+    model.add_depot(x=0, y=0)
     client1 = model.add_client(x=1, y=1)
     client2 = model.add_client(x=2, y=2)
-    client3 = model.add_client(x=3, y=3)
+    model.add_client(x=3, y=3)
     model.add_vehicle_type(num_available=2)
 
     # Add edges
@@ -303,7 +322,7 @@ def test_model_depot_addition_updates_same_vehicle_groups():
     the client indices in those groups.
     """
     model = Model()
-    depot1 = model.add_depot(x=0, y=0)
+    model.add_depot(x=0, y=0)
     client1 = model.add_client(x=1, y=1)
     client2 = model.add_client(x=2, y=2)
     model.add_vehicle_type(num_available=1)
@@ -312,7 +331,7 @@ def test_model_depot_addition_updates_same_vehicle_groups():
     model.add_same_vehicle_group(client1, client2)
 
     # Add another depot - this shifts client indices
-    depot2 = model.add_depot(x=5, y=5)
+    model.add_depot(x=5, y=5)
 
     # Add edges for the new depot
     for frm in model.locations:

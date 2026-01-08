@@ -290,10 +290,10 @@ class Model:
         self, *clients: Client, name: str = ""
     ) -> SameVehicleGroup:
         """
-        Adds a same-vehicle constraint group to the model. All clients in this
-        group that are visited must be served by the same vehicle. It is allowed
-        to visit only a subset of the group (or none at all), but any visited
-        clients must share a route.
+        Adds a same-vehicle constraint group to the model. All clients in
+        this group that are visited must be served by the same vehicle. It
+        is allowed to visit only a subset of the group (or none at all),
+        but any visited clients must share a route.
 
         Parameters
         ----------
@@ -349,13 +349,13 @@ class Model:
                 self._groups[client.group].add_client(idx)
 
         # Rebuild same-vehicle groups with updated client indices
-        old_groups = self._same_vehicle_groups
+        old_same_vehicle_groups = self._same_vehicle_groups
         self._same_vehicle_groups = []
-        for group in old_groups:
+        for svg in old_same_vehicle_groups:
             # Shift all client indices by 1 (for the new depot)
-            new_clients = [c + 1 for c in group.clients]
+            new_clients = [c + 1 for c in svg.clients]
             self._same_vehicle_groups.append(
-                SameVehicleGroup(new_clients, name=group.name)
+                SameVehicleGroup(new_clients, name=svg.name)
             )
 
         return depot
