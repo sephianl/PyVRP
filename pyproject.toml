@@ -151,6 +151,10 @@ before-build = "pip install delvewheel"
 repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel}"
 
 
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+
+
 [tool.poetry]
 include = [
     { path = "benchmarks/", format = "sdist" },

@@ -62,6 +62,8 @@ def configure(
     *additional: list[str],
 ):
     cwd = pathlib.Path.cwd()
+    native_file = cwd / "meson-native.ini"
+
     # fmt: off
     args = [
         build_dir,
@@ -72,6 +74,10 @@ def configure(
         *additional,
     ]
     # fmt: on
+
+    # Use native file for LTO support if it exists (provides gcc-ar/gcc-ranlib)
+    if native_file.exists():
+        args.insert(1, f"--native-file={native_file}")
 
     cmd = "configure" if build_dir.exists() else "setup"
     check_call(["meson", cmd, *args])  # type: ignore
