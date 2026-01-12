@@ -158,24 +158,32 @@ bool Solution::insert(Route::Node *U,
         }
     }
 
-    // Next consider empty routes, of each vehicle type. We insert into the
-    // first improving route.
+    // Next consider all routes (empty and non-empty). For non-empty routes,
+    // try inserting at the start (after depot). This handles the case where
+    // U is not in the neighbourhood of any client in the route.
     for (auto const &[vehType, offset] : searchSpace.vehTypeOrder())
     {
         auto const begin = routes.begin() + offset;
         auto const end = begin + data_.vehicleType(vehType).numAvailable;
-        auto const pred = [](auto const &route) { return route.empty(); };
-        auto empty = std::find_if(begin, end, pred);
 
-        if (empty == end)
-            continue;
-
-        auto const cost = insertCost(U, (*empty)[0], data_, costEvaluator);
-        if (cost < bestCost)
+        for (auto it = begin; it != end; ++it)
         {
-            bestCost = cost;
-            UAfter = (*empty)[0];
-            break;
+            // For non-empty routes, only try if we haven't found something via
+            // neighbourhood (the neighbourhood search is more thorough for
+            // non-empty routes since it evaluates multiple positions).
+            if (!it->empty() && UAfter->route() == &*it)
+                continue;
+
+            auto const cost = insertCost(U, (*it)[0], data_, costEvaluator);
+            if (cost < bestCost)
+            {
+                bestCost = cost;
+                UAfter = (*it)[0];
+
+                // For empty routes, stop at the first improving one.
+                if (it->empty())
+                    break;
+            }
         }
     }
 

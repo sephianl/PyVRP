@@ -3,6 +3,7 @@
 #include "DynamicBitset.h"
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <numeric>
 #include <unordered_map>
@@ -285,19 +286,50 @@ Solution::Solution(ProblemData const &data, std::vector<Route> routes)
     for (auto const &group : data.sameVehicleGroups())
     {
         // The solution is feasible w.r.t. this same-vehicle group if all
-        // visited clients in the group are on the same route.
+        // visited clients in the group are on routes that share the same
+        // vehicle name (allowing different shifts of the same vehicle), or
+        // if names are not available, they must be on the same route.
         std::optional<size_t> expectedRoute = std::nullopt;
+        char const *expectedVehicleName = nullptr;
         for (auto const client : group)
         {
             if (!isVisited[client])
                 continue;  // Client not in solution, skip
 
+            auto const routeIdx = clientRoute[client].value();
+            auto const vehType = routes_[routeIdx].vehicleType();
+            auto const *vehicleName = data.vehicleType(vehType).name;
+
             if (!expectedRoute.has_value())
-                expectedRoute = clientRoute[client];  // First visited client
-            else if (clientRoute[client] != expectedRoute)
             {
-                isGroupFeas_ = false;  // Different routes = violation
-                break;
+                expectedRoute = routeIdx;
+                expectedVehicleName = vehicleName;
+            }
+            else
+            {
+                // Check if both vehicles have the same non-empty name.
+                bool const hasNames = expectedVehicleName && vehicleName
+                                      && expectedVehicleName[0] != '\0'
+                                      && vehicleName[0] != '\0';
+
+                if (hasNames)
+                {
+                    // Names are available: allow different routes if same name
+                    if (std::strcmp(expectedVehicleName, vehicleName) != 0)
+                    {
+                        isGroupFeas_ = false;  // Different vehicle names
+                        break;
+                    }
+                }
+                else
+                {
+                    // No names: fall back to same-route constraint
+                    if (clientRoute[client] != expectedRoute)
+                    {
+                        isGroupFeas_ = false;  // Different routes
+                        break;
+                    }
+                }
             }
         }
     }

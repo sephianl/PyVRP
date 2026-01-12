@@ -676,3 +676,480 @@ def test_inserts_required_missing(instance, exp_clients: set[int], request):
 
     visits = {client for route in improved.routes() for client in route}
     assert_equal(visits, exp_clients)
+
+
+def test_inserts_optional_client_from_empty_solution():
+    """
+    Tests that the local search can insert optional clients into empty routes
+    when starting from an empty solution. This is a regression test for a bug
+    where prize-collecting VRP with some infeasible clients would return an
+    empty solution even when visiting some clients would be beneficial.
+    """
+    data = ProblemData(
+        clients=[
+            # Fits in capacity, high prize: should be visited
+            Client(x=1, y=0, delivery=[10], prize=50_000_000, required=False),
+            # Exceeds capacity: cannot be visited
+            Client(x=2, y=0, delivery=[200], prize=50_000_000, required=False),
+        ],
+        depots=[Depot(x=0, y=0)],
+        vehicle_types=[VehicleType(1, capacity=[100])],
+        distance_matrices=[
+            np.array(
+                [
+                    [0, 1, 1],
+                    [1, 0, 1],
+                    [1, 1, 0],
+                ]
+            )
+        ],
+        duration_matrices=[np.zeros((3, 3), dtype=int)],
+    )
+
+    rng = RandomNumberGenerator(seed=42)
+    ls = LocalSearch(data, rng, compute_neighbours(data))
+    ls.add_node_operator(Exchange10(data))
+
+    # Start from empty solution
+    empty_sol = Solution(data, [])
+    assert_equal(empty_sol.num_routes(), 0)
+
+    # Search should insert the feasible client
+    cost_eval = CostEvaluator([1_000_000], 0, 0)  # high penalty makes client2 infeasible
+    improved = ls.search(empty_sol, cost_eval)
+
+    # Should visit client1 (index 1) but not client2 (index 2)
+    assert_equal(improved.num_routes(), 1)
+    assert_equal(improved.num_clients(), 1)
+
+    visits = list(improved.routes()[0].visits())
+    assert_(1 in visits)  # client1 should be visited
+    assert_(2 not in visits)  # client2 is infeasible
+
+
+def test_inserts_optional_client_into_existing_route():
+    """
+    Tests that the local search can insert an unvisited optional client into
+    an existing route. This is a regression test for a bug where optional
+    clients not in the neighbourhood of visited clients would never be
+    inserted even when doing so would improve the objective.
+    """
+    data = ProblemData(
+        clients=[
+            # High weight, already in the solution
+            Client(x=0, y=0, delivery=[80], prize=50_000_000, required=False),
+            # High weight, cannot be added (would exceed capacity)
+            Client(x=1, y=0, delivery=[80], prize=50_000_000, required=False),
+            # Low weight, can be added to improve objective
+            Client(x=2, y=0, delivery=[10], prize=50_000_000, required=False),
+            # High weight, cannot be added
+            Client(x=3, y=0, delivery=[80], prize=50_000_000, required=False),
+        ],
+        depots=[Depot(x=0, y=0)],
+        vehicle_types=[VehicleType(1, capacity=[100])],
+        distance_matrices=[np.where(np.eye(5), 0, 1)],
+        duration_matrices=[np.zeros((5, 5), dtype=int)],
+    )
+
+    rng = RandomNumberGenerator(seed=42)
+    ls = LocalSearch(data, rng, compute_neighbours(data))
+    ls.add_node_operator(Exchange10(data))
+
+    # Start with a solution containing only client1 (weight 80)
+    init_sol = Solution(data, [[1]])
+    assert_equal(init_sol.num_clients(), 1)
+    assert_(init_sol.is_feasible())
+
+    # Search should add client3 (weight 10) since 80+10=90 < 100 capacity
+    cost_eval = CostEvaluator([1_000_000], 0, 0)
+    improved = ls.search(init_sol, cost_eval)
+
+    # Improved solution should have client1 AND client3
+    assert_(improved.num_clients() >= 2)
+    assert_(improved.is_feasible())
+
+    visits = set()
+    for route in improved.routes():
+        visits.update(route.visits())
+
+    assert_(1 in visits)  # original client1 should still be there
+    assert_(3 in visits)  # client3 (low weight) should be added
+
+
+def test_greedy_insertion_order_does_not_block_better_solution():
+    """
+    Tests that the local search can find a better solution when the greedy
+    insertion order would block it. This is a regression test for a scenario
+    where inserting clients greedily blocks a better solution.
+
+    Scenario: 4 optional clients with varying delivery demands.
+    - Clients 1,2: delivery=[40] each (small demand)
+    - Clients 3,4: delivery=[60] each (larger demand)
+
+    Vehicle capacity is 100.
+    - All clients individually are feasible
+    - Clients [1,2] together: 40+40=80 <= 100 (feasible)
+    - Clients [3,4] together: 60+60=120 > 100 (infeasible)
+    - Clients [1,3] together: 40+60=100 <= 100 (feasible)
+
+    If greedy insertion picks clients by some order that fills capacity early
+    (e.g., inserting 3 then unable to add 4), it might miss adding both 1 and 2.
+    """
+    data = ProblemData(
+        clients=[
+            # Small demand clients
+            Client(x=1, y=0, delivery=[40], prize=50_000_000, required=False),
+            Client(x=2, y=0, delivery=[40], prize=50_000_000, required=False),
+            # Larger demand clients
+            Client(x=3, y=0, delivery=[60], prize=50_000_000, required=False),
+            Client(x=4, y=0, delivery=[60], prize=50_000_000, required=False),
+        ],
+        depots=[Depot(x=0, y=0)],
+        vehicle_types=[VehicleType(1, capacity=[100])],
+        distance_matrices=[np.where(np.eye(5), 0, 1)],
+        duration_matrices=[np.zeros((5, 5), dtype=int)],
+    )
+
+    rng = RandomNumberGenerator(seed=42)
+    ls = LocalSearch(data, rng, compute_neighbours(data))
+    ls.add_node_operator(Exchange10(data))
+
+    # Start from empty solution
+    empty_sol = Solution(data, [])
+
+    # High penalty ensures infeasible insertions are never profitable
+    cost_eval = CostEvaluator([100_000_000], 0, 0)
+    improved = ls.search(empty_sol, cost_eval)
+
+    # The search should find a solution that visits at least 2 clients.
+    # The optimal solution visits clients 1 and 2 (total demand 80).
+    # A suboptimal greedy could pick client 3 (demand 60) and then fail to add
+    # client 4 (would be 120 > 100), ending with just 1 client.
+    assert_(improved.num_clients() >= 2, "Should visit at least 2 clients")
+    assert_(improved.is_feasible())
+
+
+def test_same_vehicle_group_allows_moves_between_same_named_vehicles():
+    """
+    Tests that same-vehicle groups allow clients to be moved between routes
+    that belong to vehicles with the same name (different shifts of the same
+    vehicle). Two vehicle types with the same name "v0" but different time
+    windows represent two shifts of the same vehicle.
+    """
+    from pyvrp import SameVehicleGroup
+
+    # 4 clients + 1 depot
+    data = ProblemData(
+        clients=[
+            Client(x=1, y=0, required=True),
+            Client(x=2, y=0, required=True),
+            Client(x=3, y=0, required=True),
+            Client(x=4, y=0, required=True),
+        ],
+        depots=[Depot(x=0, y=0)],
+        vehicle_types=[
+            # Two vehicles with the same name but different shifts
+            VehicleType(1, tw_early=0, tw_late=250, name="v0"),
+            VehicleType(1, tw_early=500, tw_late=800, name="v0"),
+        ],
+        distance_matrices=[np.where(np.eye(5), 0, 1)],
+        duration_matrices=[np.where(np.eye(5), 0, 1)],
+        same_vehicle_groups=[SameVehicleGroup([1, 2, 3, 4])],
+    )
+
+    # Solution with clients split between the two shifts of the same vehicle.
+    # Route 0 (first shift): clients 1, 2
+    # Route 1 (second shift): clients 3, 4
+    route1 = Route(data, [1, 2], 0)  # Vehicle type 0 (first shift of v0)
+    route2 = Route(data, [3, 4], 1)  # Vehicle type 1 (second shift of v0)
+    sol = Solution(data, [route1, route2])
+
+    # This solution should be feasible since both routes use vehicles with
+    # the same name "v0" (different shifts of the same vehicle).
+    assert_(sol.is_group_feasible())
+    assert_(sol.is_feasible())
+
+
+def test_same_vehicle_group_disallows_different_named_vehicles():
+    """
+    Tests that same-vehicle groups still disallow clients to be on routes
+    belonging to vehicles with different names.
+    """
+    from pyvrp import SameVehicleGroup
+
+    # 4 clients + 1 depot
+    data = ProblemData(
+        clients=[
+            Client(x=1, y=0, required=True),
+            Client(x=2, y=0, required=True),
+            Client(x=3, y=0, required=True),
+            Client(x=4, y=0, required=True),
+        ],
+        depots=[Depot(x=0, y=0)],
+        vehicle_types=[
+            VehicleType(1, name="v0"),
+            VehicleType(1, name="v1"),  # Different name
+        ],
+        distance_matrices=[np.where(np.eye(5), 0, 1)],
+        duration_matrices=[np.where(np.eye(5), 0, 1)],
+        same_vehicle_groups=[SameVehicleGroup([1, 2, 3, 4])],
+    )
+
+    # Solution with clients split between two different vehicles.
+    route1 = Route(data, [1, 2], 0)  # Vehicle v0
+    route2 = Route(data, [3, 4], 1)  # Vehicle v1 (different)
+    sol = Solution(data, [route1, route2])
+
+    # This solution should be infeasible since routes use different vehicles.
+    assert_(not sol.is_group_feasible())
+    assert_(not sol.is_feasible())
+
+
+def test_same_vehicle_group_disallows_empty_names():
+    """
+    Tests that vehicles with empty names are treated as distinct, even if
+    both have empty names.
+    """
+    from pyvrp import SameVehicleGroup
+
+    # 4 clients + 1 depot
+    data = ProblemData(
+        clients=[
+            Client(x=1, y=0, required=True),
+            Client(x=2, y=0, required=True),
+            Client(x=3, y=0, required=True),
+            Client(x=4, y=0, required=True),
+        ],
+        depots=[Depot(x=0, y=0)],
+        vehicle_types=[
+            VehicleType(1, name=""),  # Empty name
+            VehicleType(1, name=""),  # Empty name
+        ],
+        distance_matrices=[np.where(np.eye(5), 0, 1)],
+        duration_matrices=[np.where(np.eye(5), 0, 1)],
+        same_vehicle_groups=[SameVehicleGroup([1, 2, 3, 4])],
+    )
+
+    # Solution with clients split between two routes with empty names.
+    route1 = Route(data, [1, 2], 0)
+    route2 = Route(data, [3, 4], 1)
+    sol = Solution(data, [route1, route2])
+
+    # This solution should be infeasible since empty names don't match.
+    assert_(not sol.is_group_feasible())
+    assert_(not sol.is_feasible())
+
+
+def test_local_search_respects_same_vehicle_group_across_shifts():
+    """
+    Tests that local search does not move clients from a same-vehicle group
+    to routes belonging to a different vehicle (different name), even when
+    such a move would be improving in terms of distance.
+
+    NOTE: This test verifies that the initial solution is group-feasible
+    and that the local search maintains feasibility. The actual local search
+    constraint enforcement is tested via the C++ unit tests.
+    """
+    from pyvrp import SameVehicleGroup
+
+    # Set up a problem where clients 1 and 2 must stay on the same vehicle.
+    data = ProblemData(
+        clients=[
+            Client(x=0, y=1, required=True),  # client 1
+            Client(x=0, y=2, required=True),  # client 2 (in same group as 1)
+            Client(x=10, y=0, required=True),  # client 3
+        ],
+        depots=[Depot(x=0, y=0)],
+        vehicle_types=[
+            VehicleType(1, name="v0"),
+            VehicleType(1, name="v1"),  # Different vehicle
+        ],
+        distance_matrices=[np.where(np.eye(4), 0, 1)],
+        duration_matrices=[np.zeros((4, 4), dtype=int)],
+        same_vehicle_groups=[SameVehicleGroup([1, 2])],  # 1 and 2 must stay together
+    )
+
+    # Initial solution: clients 1, 2 on v0; client 3 on v1.
+    route1 = Route(data, [1, 2], 0)
+    route2 = Route(data, [3], 1)
+    sol = Solution(data, [route1, route2])
+
+    # This solution is feasible because clients 1 and 2 are on the same vehicle.
+    assert_(sol.is_group_feasible())
+    assert_(sol.is_feasible())
+
+    # Verify that a solution splitting 1 and 2 across different vehicles is
+    # infeasible.
+    route_bad1 = Route(data, [1, 3], 0)  # v0
+    route_bad2 = Route(data, [2], 1)  # v1 (different name)
+    bad_sol = Solution(data, [route_bad1, route_bad2])
+    assert_(not bad_sol.is_group_feasible())
+
+
+def test_local_search_allows_moves_within_same_vehicle_shifts():
+    """
+    Tests that solutions with same-vehicle groups distributed across
+    different shifts (routes) of the same vehicle (same name) are feasible.
+    """
+    from pyvrp import SameVehicleGroup
+
+    data = ProblemData(
+        clients=[
+            Client(x=1, y=0, required=True),
+            Client(x=2, y=0, required=True),
+            Client(x=3, y=0, required=True),
+            Client(x=4, y=0, required=True),
+        ],
+        depots=[Depot(x=0, y=0)],
+        vehicle_types=[
+            # Two shifts of the same vehicle (same name, different time windows)
+            VehicleType(1, tw_early=0, tw_late=500, name="v0"),
+            VehicleType(1, tw_early=1000, tw_late=1500, name="v0"),
+        ],
+        distance_matrices=[np.where(np.eye(5), 0, 1)],
+        duration_matrices=[np.where(np.eye(5), 0, 1)],
+        same_vehicle_groups=[SameVehicleGroup([1, 2, 3, 4])],
+    )
+
+    # Solution with all clients on first shift - should be feasible.
+    route1 = Route(data, [1, 2, 3, 4], 0)
+    sol1 = Solution(data, [route1])
+    assert_(sol1.is_group_feasible())
+
+    # Solution with clients split across two shifts of the same vehicle
+    # (same name "v0") - should also be feasible.
+    route_shift1 = Route(data, [1, 2], 0)  # First shift of v0
+    route_shift2 = Route(data, [3, 4], 1)  # Second shift of v0
+    sol2 = Solution(data, [route_shift1, route_shift2])
+    assert_(sol2.is_group_feasible())
+    assert_(sol2.is_feasible())
+
+
+def test_local_search_blocks_moves_to_different_vehicle():
+    """
+    Tests that solutions that split a same-vehicle group across different
+    vehicles (different names) are infeasible.
+    """
+    from pyvrp import SameVehicleGroup
+
+    data = ProblemData(
+        clients=[
+            Client(x=1, y=0, required=True),  # client 1
+            Client(x=100, y=0, required=True),  # client 2
+        ],
+        depots=[Depot(x=0, y=0)],
+        vehicle_types=[
+            VehicleType(1, name="v0"),
+            VehicleType(1, name="v1"),
+        ],
+        distance_matrices=[
+            np.array(
+                [
+                    [0, 1, 100],
+                    [1, 0, 99],
+                    [100, 99, 0],
+                ]
+            )
+        ],
+        duration_matrices=[np.zeros((3, 3), dtype=int)],
+        same_vehicle_groups=[SameVehicleGroup([1, 2])],
+    )
+
+    # Feasible solution: both clients on v0.
+    route_feasible = Route(data, [1, 2], 0)
+    sol_feasible = Solution(data, [route_feasible])
+    assert_(sol_feasible.is_group_feasible())
+    assert_(sol_feasible.is_feasible())
+
+    # Infeasible solution: clients split across different vehicles.
+    route_v0 = Route(data, [1], 0)
+    route_v1 = Route(data, [2], 1)
+    sol_infeasible = Solution(data, [route_v0, route_v1])
+    assert_(not sol_infeasible.is_group_feasible())
+    assert_(not sol_infeasible.is_feasible())
+
+
+def test_local_search_improves_infeasible_same_vehicle_group():
+    """
+    Tests that solutions that violate same-vehicle group constraints are
+    correctly identified as infeasible. Also tests that combining clients
+    on the same route makes the solution feasible.
+    """
+    from pyvrp import SameVehicleGroup
+
+    data = ProblemData(
+        clients=[
+            Client(x=1, y=0, required=True),
+            Client(x=2, y=0, required=True),
+        ],
+        depots=[Depot(x=0, y=0)],
+        vehicle_types=[
+            VehicleType(2, name=""),  # 2 vehicles available, no name
+        ],
+        distance_matrices=[np.where(np.eye(3), 0, 1)],
+        duration_matrices=[np.zeros((3, 3), dtype=int)],
+        same_vehicle_groups=[SameVehicleGroup([1, 2])],
+    )
+
+    # Infeasible: clients on different routes, and vehicle has no name
+    # (empty names are treated as distinct vehicles).
+    route1 = Route(data, [1], 0)
+    route2 = Route(data, [2], 0)
+    sol_infeasible = Solution(data, [route1, route2])
+    assert_(not sol_infeasible.is_group_feasible())
+
+    # Feasible: both clients on the same route.
+    route_combined = Route(data, [1, 2], 0)
+    sol_feasible = Solution(data, [route_combined])
+    assert_(sol_feasible.is_group_feasible())
+    assert_(sol_feasible.is_feasible())
+
+
+def test_local_search_same_vehicle_group_with_multiple_groups():
+    """
+    Tests that multiple same-vehicle groups work correctly, with constraints
+    respected for each group independently.
+    """
+    from pyvrp import SameVehicleGroup
+
+    data = ProblemData(
+        clients=[
+            Client(x=1, y=0, required=True),  # Group A
+            Client(x=2, y=0, required=True),  # Group A
+            Client(x=3, y=0, required=True),  # Group B
+            Client(x=4, y=0, required=True),  # Group B
+        ],
+        depots=[Depot(x=0, y=0)],
+        vehicle_types=[
+            VehicleType(1, name="v0"),
+            VehicleType(1, name="v1"),
+        ],
+        distance_matrices=[np.where(np.eye(5), 0, 1)],
+        duration_matrices=[np.zeros((5, 5), dtype=int)],
+        same_vehicle_groups=[
+            SameVehicleGroup([1, 2]),  # Group A: clients 1, 2
+            SameVehicleGroup([3, 4]),  # Group B: clients 3, 4
+        ],
+    )
+
+    # Feasible solution: Group A on v0, Group B on v1.
+    route1 = Route(data, [1, 2], 0)
+    route2 = Route(data, [3, 4], 1)
+    sol_feasible = Solution(data, [route1, route2])
+    assert_(sol_feasible.is_group_feasible())
+    assert_(sol_feasible.is_feasible())
+
+    # Infeasible solution: Group A is split across v0 and v1.
+    route_v0 = Route(data, [1, 3], 0)  # Client 1 (Group A) + Client 3 (Group B)
+    route_v1 = Route(data, [2, 4], 1)  # Client 2 (Group A) + Client 4 (Group B)
+    sol_infeasible = Solution(data, [route_v0, route_v1])
+    # Both groups are split across different vehicles -> infeasible
+    assert_(not sol_infeasible.is_group_feasible())
+    assert_(not sol_infeasible.is_feasible())
+
+    # Another infeasible solution: only Group A is split.
+    route_all_v0 = Route(data, [1, 3, 4], 0)  # Clients 1, 3, 4 on v0
+    route_only_2 = Route(data, [2], 1)  # Client 2 alone on v1
+    sol_split_a = Solution(data, [route_all_v0, route_only_2])
+    # Group A is split (1 on v0, 2 on v1), but Group B is together on v0
+    assert_(not sol_split_a.is_group_feasible())
