@@ -1183,3 +1183,54 @@ def test_local_search_same_vehicle_group_with_multiple_groups():
     sol_split_a = Solution(data, [route_all_v0, route_only_2])
     # Group A is split (1 on v0, 2 on v1), but Group B is together on v0
     assert_(not sol_split_a.is_group_feasible())
+
+
+def test_same_vehicle_group_spanning_multiple_shifts_with_capacity():
+    """
+    Tests that the solver can find a feasible solution when clients in a
+    same-vehicle group have a combined demand that exceeds single-route
+    capacity, but multiple shifts (vehicle types with the same name) are
+    available to service them.
+
+    This models "equipment constraints" where certain clients require a
+    specific piece of equipment (e.g., a key) and only the vehicle with that
+    equipment can service them. With multiple shifts of the same vehicle,
+    the equipment can be split across routes.
+    """
+    from pyvrp import SameVehicleGroup, solve
+    from pyvrp.stop import MaxIterations
+
+    # 4 clients with demand 1 each, but vehicle capacity is only 2.
+    # All 4 clients must be on the same vehicle (same-vehicle group).
+    # This is only possible with multiple routes/shifts of that vehicle.
+    data = ProblemData(
+        clients=[
+            Client(x=1, y=0, delivery=[1], required=True),
+            Client(x=2, y=0, delivery=[1], required=True),
+            Client(x=3, y=0, delivery=[1], required=True),
+            Client(x=4, y=0, delivery=[1], required=True),
+        ],
+        depots=[Depot(x=0, y=0)],
+        vehicle_types=[
+            # Two shifts of the same vehicle (same name, capacity=2 each)
+            VehicleType(1, capacity=[2], tw_early=0, tw_late=500, name="v0"),
+            VehicleType(1, capacity=[2], tw_early=500, tw_late=1000, name="v0"),
+        ],
+        distance_matrices=[np.where(np.eye(5), 0, 1)],
+        duration_matrices=[np.where(np.eye(5), 0, 1)],
+        same_vehicle_groups=[SameVehicleGroup([1, 2, 3, 4])],
+    )
+
+    # The solver should find a solution where all 4 clients are visited
+    # using two routes (shifts) of the same vehicle "v0".
+    result = solve(data, stop=MaxIterations(1000), seed=42)
+
+    assert_(result.best.is_feasible())
+    assert_equal(result.best.num_clients(), 4)
+
+    # Verify all clients are on routes with the same vehicle name.
+    routes = result.best.routes()
+    assert_equal(len(routes), 2)
+    for route in routes:
+        veh_type = data.vehicle_type(route.vehicle_type())
+        assert_equal(veh_type.name, "v0")
